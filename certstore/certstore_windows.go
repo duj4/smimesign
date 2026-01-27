@@ -64,10 +64,11 @@ const (
 // API will be used.
 //
 // Possible values are:
-//   0x00000000 —                                      — Only use CryptoAPI.
-//   0x00010000 — CRYPT_ACQUIRE_ALLOW_NCRYPT_KEY_FLAG  — Prefer CryptoAPI.
-//   0x00020000 — CRYPT_ACQUIRE_PREFER_NCRYPT_KEY_FLAG — Prefer CNG.
-//   0x00040000 — CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG   — Only uyse CNG.
+//
+// 0x00000000 —                                      — Only use CryptoAPI.
+// 0x00010000 — CRYPT_ACQUIRE_ALLOW_NCRYPT_KEY_FLAG  — Prefer CryptoAPI.
+// 0x00020000 — CRYPT_ACQUIRE_PREFER_NCRYPT_KEY_FLAG — Prefer CNG.
+// 0x00040000 — CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG   — Only use CNG.
 var winAPIFlag C.DWORD = C.CRYPT_ACQUIRE_PREFER_NCRYPT_KEY_FLAG
 
 // winStore is a wrapper around a C.HCERTSTORE.
@@ -426,16 +427,16 @@ func (wpk *winPrivateKey) Public() crypto.PublicKey {
 // Sign implements the crypto.Signer interface.
 func (wpk *winPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	if wpk.capiProv != 0 {
-		return wpk.capiSignHash(opts.HashFunc(), digest)
+		return wpk.capiSignHash(opts.HashFunc(), digest, opts)
 	} else if wpk.cngHandle != 0 {
-		return wpk.cngSignHash(opts.HashFunc(), digest)
+		return wpk.cngSignHash(opts.HashFunc(), digest, opts)
 	} else {
 		return nil, errors.New("bad private key")
 	}
 }
 
 // cngSignHash signs a digest using the CNG APIs.
-func (wpk *winPrivateKey) cngSignHash(hash crypto.Hash, digest []byte) ([]byte, error) {
+func (wpk *winPrivateKey) cngSignHash(hash crypto.Hash, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	if len(digest) != hash.Size() {
 		return nil, errors.New("bad digest for hash")
 	}
@@ -451,23 +452,60 @@ func (wpk *winPrivateKey) cngSignHash(hash crypto.Hash, digest []byte) ([]byte, 
 		sigLen = C.DWORD(0)
 	)
 
-	// setup pkcs1v1.5 padding for RSA
+	// setup padding for RSA based on what GO requested in opts.
+	// TLS 1.3 (and TLS 1.2 when RSA-PSS signature schemes are negotiated) will set opts to *rsa.PSSOptions.
+	// For legacy RSA PKCS#1 v1.5 schemes, opts will not be *rsa.PSSOptions.
+	// Otherwise, the original one would process PKCS#1 v1.5 only with the default branch no matter what opt is.
 	if _, isRSA := wpk.publicKey.(*rsa.PublicKey); isRSA {
-		flags |= C.BCRYPT_PAD_PKCS1
-		padInfo := C.BCRYPT_PKCS1_PADDING_INFO{}
-		padPtr = unsafe.Pointer(&padInfo)
+		switch opt := opts.(type) {
+		// RSA-PSS
+		case *rsa.PSSOptions:
+			flags |= C.BCRYPT_PAD_PSS
+			padInfo := C.BCRYPT_PSS_PADDING_INFO{}
+			padPtr = unsafe.Pointer(&padInfo)
 
-		switch hash {
-		case crypto.SHA1:
-			padInfo.pszAlgId = BCRYPT_SHA1_ALGORITHM
-		case crypto.SHA256:
-			padInfo.pszAlgId = BCRYPT_SHA256_ALGORITHM
-		case crypto.SHA384:
-			padInfo.pszAlgId = BCRYPT_SHA384_ALGORITHM
-		case crypto.SHA512:
-			padInfo.pszAlgId = BCRYPT_SHA512_ALGORITHM
+			// Hash algorithm
+			switch hash {
+			case crypto.SHA1:
+				padInfo.pszAlgId = BCRYPT_SHA1_ALGORITHM
+			case crypto.SHA256:
+				padInfo.pszAlgId = BCRYPT_SHA256_ALGORITHM
+			case crypto.SHA384:
+				padInfo.pszAlgId = BCRYPT_SHA384_ALGORITHM
+			case crypto.SHA512:
+				padInfo.pszAlgId = BCRYPT_SHA512_ALGORITHM
+			default:
+				return nil, ErrUnsupportedHash
+			}
+
+			// Salt length (RSA-PSS)
+			// Go's rsa.PSSOptions.SaltLength may be 0 (PSSSaltLengthAuto) or -1 (PSSSaltLengthEqualsHash).
+			// For TLS, "equals hash size" is the interoperable expectation, so we normalize
+			// any non-positive value (auto/equals-hash/other negatives) to hash.Size().
+			saltLength := opt.SaltLength
+			if saltLength <= 0 {
+				saltLength = hash.Size()
+			}
+			padInfo.cbSalt = C.ULONG(saltLength)
+
+		// RSA PKCS#1 v1.5
 		default:
-			return nil, ErrUnsupportedHash
+			flags |= C.BCRYPT_PAD_PKCS1
+			padInfo := C.BCRYPT_PKCS1_PADDING_INFO{}
+			padPtr = unsafe.Pointer(&padInfo)
+
+			switch hash {
+			case crypto.SHA1:
+				padInfo.pszAlgId = BCRYPT_SHA1_ALGORITHM
+			case crypto.SHA256:
+				padInfo.pszAlgId = BCRYPT_SHA256_ALGORITHM
+			case crypto.SHA384:
+				padInfo.pszAlgId = BCRYPT_SHA384_ALGORITHM
+			case crypto.SHA512:
+				padInfo.pszAlgId = BCRYPT_SHA512_ALGORITHM
+			default:
+				return nil, ErrUnsupportedHash
+			}
 		}
 	}
 
@@ -511,6 +549,18 @@ func (wpk *winPrivateKey) cngSignHash(hash crypto.Hash, digest []byte) ([]byte, 
 func (wpk *winPrivateKey) capiSignHash(hash crypto.Hash, digest []byte) ([]byte, error) {
 	if len(digest) != hash.Size() {
 		return nil, errors.New("bad digest for hash")
+	}
+
+	// Fail fast for RSA-PSS when using CryptoAPI (CAPI).
+	// https://learn.microsoft.com/en-us/windows/win32/api/wincrypt/nf-wincrypt-cryptsignhasha
+	// CryptoAPI signing via CryptSignHash produces RSA signatures with PKCS#1 v1.5 padding
+	// and does not provide the parameterized RSA-PSS signing interface (salt length, hash alg, etc.).
+	// CNG/BCryptSignHash supports RSA-PSS via BCRYPT_PAD_PSS with BCRYPT_PSS_PADDING_INFO, so callers
+	// requiring RSA-PSS must use the CNG path instead of silently producing a non-PSS signature.
+	if _, isRSA := wpk.publicKey.(*rsa.PublicKey); isRSA {
+		if _, ok := opts.(*rsa.PSSOptions); ok {
+			return nil, errors.New("CryptoAPI (CAPI) does not support RSA-PSS signing in this signer; use CNG or disable RSA-PSS")
+		}
 	}
 
 	// Figure out which CryptoAPI hash algorithm we're using.
