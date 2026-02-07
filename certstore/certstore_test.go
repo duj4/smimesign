@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/x509"
+	"strings"
 	"testing"
 
 	"github.com/github/smimesign/fakeca"
@@ -163,6 +164,24 @@ func TestSignerRSA(t *testing.T) {
 			if err = leafRSA.Certificate.CheckSignature(x509.SHA512WithRSA, []byte("hello"), sig); err != nil {
 				t.Fatal(err)
 			}
+		}
+
+		// RSA-PSS (SHA256)
+		// Provider like CAPI does not support RSA-PSS; accept a clean error and skip.
+		pssDigest := sha256.Sum256([]byte("hello"))
+		pssOpts := &rsa.PSSOptions{
+			SaltLength: rsa.PSSSaltLengthEqualsHash,
+			Hash:       crypto.SHA256,
+		}
+		pssSig, err := signer.Sign(rand.Reader, pssDigest[:], pssOpts)
+		if err != nil {
+			if strings.Contains(err.Error(), "does not support RSA-PSS") {
+				t.Skipf("RSA-PSS is not supported by provider: %v", err)
+			}
+			t.Fatal(err)
+		}
+		if err := rsa.VerifyPSS(rsaPub, crypto.SHA256, pssDigest[:], pssSig, pssOpts); err != nil {
+			t.Fatal(err)
 		}
 
 		// Bad digest size
