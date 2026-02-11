@@ -12,22 +12,17 @@ jobs:
       CGO_ENABLED: 1
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          # `fetch-depth: 0` gets us all tags.
           fetch-depth: 0
 
       - name: Install Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ matrix.go-version }}
-          cache: true
 
       - name: Calculate git version and add it to the environment
         shell: bash
-        # We have to `$GITHUB_ENV` to create env vars that can be used in future steps (in particular, as part of download file names).
-        # https://docs.github.com/en/actions/reference/workflow-commands-for-github-actions#environment-files
-        # https://github.blog/changelog/2020-10-01-github-actions-deprecating-set-env-and-add-path-commands/
         run: |
           echo "GIT_VERSION=$(git describe --tags)" >> $GITHUB_ENV
 
@@ -37,19 +32,15 @@ jobs:
 
       - name: Tar the macOS binary
         run: |
-          # We cd so that the binary ends up in the top level of the tar.
           cd build/macos && tar -czvf smimesign-macos-${{ env.GIT_VERSION }}.tgz smimesign
 
       - name: Upload build folder to the action
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4
         with:
-          # Note: this artifact is shared across jobs:
-          # https://github.com/actions/upload-artifact#uploading-to-the-same-artifact
           name: build
           path: build/
 
       - name: Upload macOS files to the release
-        # Pinned hash from https://github.com/softprops/action-gh-release/releases/tag/v0.1.12
         uses: softprops/action-gh-release@2d72d869af3bf23602f9593a1e3fd739b80ac1eb
         if: startsWith(github.ref, 'refs/tags/v')
         with:
@@ -66,27 +57,21 @@ jobs:
       CGO_ENABLED: 1
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          # `fetch-depth: 0` gets us all tags.
           fetch-depth: 0
 
       - name: Install Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ matrix.go-version }}
-          cache: true
 
       - name: Calculate git version and add it to the environment
         shell: bash
-        # We have to use this format to create env vars that can be used in future steps (in particular, as part of download file names).
-        # https://docs.github.com/en/actions/reference/workflow-commands-for-github-actions#environment-files
-        # https://github.blog/changelog/2020-10-01-github-actions-deprecating-set-env-and-add-path-commands/
         run: |
           echo "GIT_VERSION=$(git describe --tags)" >> $GITHUB_ENV
 
       - name: Calculate bare git version and add it to the environment
-        # This is for InnoSetup
         shell: bash
         run: |
           if [[ "${GIT_VERSION}" =~ ^v([[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+)(-[A-za-z0-9-]*)? ]]
@@ -97,21 +82,25 @@ jobs:
             exit 1
           fi
 
-      - name: Build amd64
-        shell: bash
-        run: |
-          GOARCH=amd64 go build -o "build/amd64/smimesign.exe" -ldflags "-X main.versionString=${{ env.GIT_VERSION }}"
-
-      - name: Switch MinGW to x86
-        # Pinned hash from https://github.com/egor-tensin/setup-mingw/releases/tag/v2
-        uses: egor-tensin/setup-mingw@f3c5d799aadf8fa230ac67a422b01dd085bbc96b
+      - name: Setup MSYS2 (MINGW64) toolchains
+        uses: msys2/setup-msys2@4f806de0a5a7294ffabaff804b38a9b435a73bda # v2
         with:
-          platform: x86
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-toolchain
+            mingw-w64-i686-toolchain
+            mingw-w64-x86_64-openssl
 
-      - name: Build 386
-        shell: bash
+      - name: Build amd64 (mingw-w64)
+        shell: msys2 {0}
         run: |
-          GOARCH=386 go build -o "build/386/smimesign.exe" -ldflags "-X main.versionString=${{ env.GIT_VERSION }}" .
+          CC=x86_64-w64-mingw32-gcc GOARCH=amd64 go build -o "build/amd64/smimesign.exe" -ldflags "-X main.versionString=${GIT_VERSION}" .
+
+      - name: Build 386 (mingw-w64)
+        shell: msys2 {0}
+        run: |
+          CC=i686-w64-mingw32-gcc GOARCH=386 go build -o "build/386/smimesign.exe" -ldflags "-X main.versionString=${GIT_VERSION}" .
 
       - name: Sign amd64 and 386
         if: startsWith(github.ref, 'refs/tags/v')
@@ -141,15 +130,12 @@ jobs:
           mv build/386/smimesign.zip build/386/smimesign-windows-386-${{ env.GIT_VERSION }}.zip
 
       - name: Upload build folder to the action
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4
         with:
-          # Note: this artifact is shared across jobs:
-          # https://github.com/actions/upload-artifact#uploading-to-the-same-artifact
           name: build
           path: build/
 
       - name: Upload Windows files to the release
-        # Pinned hash from https://github.com/softprops/action-gh-release/releases/tag/v0.1.12
         uses: softprops/action-gh-release@2d72d869af3bf23602f9593a1e3fd739b80ac1eb
         if: startsWith(github.ref, 'refs/tags/v')
         with:
