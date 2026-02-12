@@ -1,6 +1,10 @@
 on: [push, pull_request]
 name: Build binaries
 
+permissions:
+  contents: read
+  releases: write
+
 jobs:
   build-macos:
     strategy:
@@ -27,17 +31,21 @@ jobs:
           echo "GIT_VERSION=$(git describe --tags)" >> $GITHUB_ENV
 
       - name: Build macos binary
+        env:
+          G_VERSION: ${{ env.GIT_VERSION }}
         run: |
-          go build -o build/macos/smimesign -ldflags "-X main.versionString=${{ env.GIT_VERSION }}" .
+          go build -o build/macos/smimesign -ldflags "-X main.versionString=$G_VERSION" .
 
       - name: Tar the macOS binary
+        env:
+          G_VERSION: ${{ env.GIT_VERSION }}
         run: |
-          cd build/macos && tar -czvf smimesign-macos-${{ env.GIT_VERSION }}.tgz smimesign
+          cd build/macos && tar -czvf "smimesign-macos-$G_VERSION.tgz" smimesign
 
       - name: Upload build folder to the action
         uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4
         with:
-          name: build
+          name: build-macos
           path: build/
 
       - name: Upload macOS files to the release
@@ -73,12 +81,14 @@ jobs:
 
       - name: Calculate bare git version and add it to the environment
         shell: bash
+        env:
+          G_VERSION: ${{ env.GIT_VERSION }}
         run: |
-          if [[ "${GIT_VERSION}" =~ ^v([[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+)(-[A-za-z0-9-]*)? ]]
+          if [[ "$G_VERSION" =~ ^v([[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+)(-[A-za-z0-9-]*)? ]]
           then
             echo "BARE_GIT_VERSION=${BASH_REMATCH[1]}" >> $GITHUB_ENV
           else
-            echo "Could not calculate the bare git version for: ${GIT_VERSION}"
+            echo "Could not calculate the bare git version for: $G_VERSION"
             exit 1
           fi
 
@@ -87,6 +97,8 @@ jobs:
         with:
           msystem: MINGW64
           update: true
+          # 修复 go: command not found：让 MSYS2 继承 Windows 系统路径
+          path-type: inherit
           install: >-
             mingw-w64-x86_64-toolchain
             mingw-w64-i686-toolchain
@@ -94,29 +106,40 @@ jobs:
 
       - name: Build amd64 (mingw-w64)
         shell: msys2 {0}
+        env:
+          G_VERSION: ${{ env.GIT_VERSION }}
         run: |
-          CC=x86_64-w64-mingw32-gcc GOARCH=amd64 go build -o "build/amd64/smimesign.exe" -ldflags "-X main.versionString=${GIT_VERSION}" .
+          CC=x86_64-w64-mingw32-gcc GOARCH=amd64 go build -o "build/amd64/smimesign.exe" -ldflags "-X main.versionString=$G_VERSION" .
 
       - name: Build 386 (mingw-w64)
         shell: msys2 {0}
+        env:
+          G_VERSION: ${{ env.GIT_VERSION }}
         run: |
-          CC=i686-w64-mingw32-gcc GOARCH=386 go build -o "build/386/smimesign.exe" -ldflags "-X main.versionString=${GIT_VERSION}" .
+          CC=i686-w64-mingw32-gcc GOARCH=386 go build -o "build/386/smimesign.exe" -ldflags "-X main.versionString=$G_VERSION" .
 
       - name: Sign amd64 and 386
         if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          PFX_PASSWORD: ${{ secrets.PFX_PASSWORD }}
         run: |
-          .\windows-installer\signtool.exe sign /tr http://timestamp.digicert.com /td sha256 /fd sha256 /p ${{ secrets.PFX_PASSWORD }} /f windows-installer\codesign.pfx build/amd64/smimesign.exe
-          .\windows-installer\signtool.exe sign /tr http://timestamp.digicert.com /td sha256 /fd sha256 /p ${{ secrets.PFX_PASSWORD }} /f windows-installer\codesign.pfx build/386/smimesign.exe
+          .\windows-installer\signtool.exe sign /tr http://timestamp.digicert.com /td sha256 /fd sha256 /p "$PFX_PASSWORD" /f windows-installer\codesign.pfx build/amd64/smimesign.exe
+          .\windows-installer\signtool.exe sign /tr http://timestamp.digicert.com /td sha256 /fd sha256 /p "$PFX_PASSWORD" /f windows-installer\codesign.pfx build/386/smimesign.exe
 
       - name: Create installer
         shell: bash
+        env:
+          G_VERSION: ${{ env.GIT_VERSION }}
+          B_G_VERSION: ${{ env.BARE_GIT_VERSION }}
         run: |
-          GIT_VERSION=${{ env.GIT_VERSION }} BARE_GIT_VERSION=${{ env.BARE_GIT_VERSION }} iscc windows-installer/inno-setup-smimesign-installer.iss
+          GIT_VERSION="$G_VERSION" BARE_GIT_VERSION="$B_G_VERSION" iscc windows-installer/inno-setup-smimesign-installer.iss
 
       - name: Sign installer
         if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          PFX_PASSWORD: ${{ secrets.PFX_PASSWORD }}
         run: |
-          .\windows-installer\signtool.exe sign /tr http://timestamp.digicert.com /td sha256 /fd sha256 /p ${{ secrets.PFX_PASSWORD }} /f windows-installer\codesign.pfx build\installer\smimesign-windows-*.exe
+          .\windows-installer\signtool.exe sign /tr http://timestamp.digicert.com /td sha256 /fd sha256 /p "$PFX_PASSWORD" /f windows-installer\codesign.pfx build\installer\smimesign-windows-*.exe
 
       - name: Create zips for release upload
         run: |
@@ -125,14 +148,16 @@ jobs:
 
       - name: Rename zips for release upload
         shell: bash
+        env:
+          G_VERSION: ${{ env.GIT_VERSION }}
         run: |
-          mv build/amd64/smimesign.zip build/amd64/smimesign-windows-amd64-${{ env.GIT_VERSION }}.zip
-          mv build/386/smimesign.zip build/386/smimesign-windows-386-${{ env.GIT_VERSION }}.zip
+          mv build/amd64/smimesign.zip "build/amd64/smimesign-windows-amd64-$G_VERSION.zip"
+          mv build/386/smimesign.zip "build/386/smimesign-windows-386-$G_VERSION.zip"
 
       - name: Upload build folder to the action
         uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4
         with:
-          name: build
+          name: build-windows
           path: build/
 
       - name: Upload Windows files to the release

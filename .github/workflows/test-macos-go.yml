@@ -1,16 +1,12 @@
-on: [push, pull_request]
-name: Test macOS
-
 jobs:
   test:
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Go 1.14 does not have darwin/arm64 binaries. Use an Intel runner.
-          - go-version: "1.14"
+          - go-version: "1.17"
             os: macos-13
-          - go-version: "1.x"
+          - go-version: "1.x" 
             os: macos-latest
 
     runs-on: ${{ matrix.os }}
@@ -25,7 +21,6 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ matrix.go-version }}
-          cache: true
 
       - name: Test
         run: go test -v ./...
