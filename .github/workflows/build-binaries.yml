@@ -2,8 +2,7 @@ on: [push, pull_request]
 name: Build binaries
 
 permissions:
-  contents: read
-  releases: write
+  contents: write
 
 jobs:
   build-macos:
@@ -25,6 +24,7 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ matrix.go-version }}
+          cache: false
 
       - name: Calculate git version and add it to the environment
         shell: bash
@@ -50,6 +50,7 @@ jobs:
           path: build/
 
       - name: Upload macOS files to the release
+        # zizmor: ignore[cache-poisoning]
         uses: softprops/action-gh-release@2d72d869af3bf23602f9593a1e3fd739b80ac1eb
         if: startsWith(github.ref, 'refs/tags/v')
         with:
@@ -75,6 +76,7 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ matrix.go-version }}
+          cache: false
 
       - name: Calculate git version and add it to the environment
         shell: bash
@@ -163,6 +165,7 @@ jobs:
           path: build/
 
       - name: Upload Windows files to the release
+        # zizmor: ignore[cache-poisoning]
         uses: softprops/action-gh-release@2d72d869af3bf23602f9593a1e3fd739b80ac1eb
         if: startsWith(github.ref, 'refs/tags/v')
         with:
