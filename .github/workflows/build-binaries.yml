@@ -2,10 +2,12 @@ on: [push, pull_request]
 name: Build binaries
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-macos:
+    permissions:
+      contents: write
     strategy:
       matrix:
         go-version: ["1.17"]
@@ -24,7 +26,6 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ matrix.go-version }}
-          cache: false
 
       - name: Calculate git version and add it to the environment
         shell: bash
@@ -58,6 +59,8 @@ jobs:
             build/macos/smimesign-macos-${{ env.GIT_VERSION }}.tgz
 
   build-windows:
+    permissions:
+      contents: write
     strategy:
       matrix:
         go-version: ["1.17"]
@@ -76,7 +79,6 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ matrix.go-version }}
-          cache: false
 
       - name: Calculate git version and add it to the environment
         shell: bash
@@ -101,7 +103,6 @@ jobs:
         with:
           msystem: MINGW64
           update: true
-          # 修复 go: command not found：让 MSYS2 继承 Windows 系统路径
           path-type: inherit
           install: >-
             mingw-w64-x86_64-toolchain
@@ -120,6 +121,8 @@ jobs:
         env:
           G_VERSION: ${{ env.GIT_VERSION }}
         run: |
+          export PATH="/c/msys64/mingw32/bin:$PATH"
+          which i686-w64-mingw32-gcc || pacman -Sy --noconfirm mingw-w64-i686-toolchain
           CC=i686-w64-mingw32-gcc GOARCH=386 go build -o "build/386/smimesign.exe" -ldflags "-X main.versionString=$G_VERSION" .
 
       - name: Sign amd64 and 386
