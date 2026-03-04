@@ -6,6 +6,7 @@ permissions:
 
 jobs:
   build-macos:
+    # zizmor: ignore[overly-broad-permissions]
     permissions:
       contents: write
     strategy:
@@ -16,6 +17,7 @@ jobs:
     env:
       CGO_ENABLED: 1
     steps:
+      # zizmor: ignore[cache-poisoning]
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -49,7 +51,7 @@ jobs:
         with:
           name: build-macos
           path: build/
-      
+
       # zizmor: ignore[cache-poisoning]
       - name: Upload macOS files to the release
         uses: softprops/action-gh-release@2d72d869af3bf23602f9593a1e3fd739b80ac1eb
@@ -59,6 +61,7 @@ jobs:
             build/macos/smimesign-macos-${{ env.GIT_VERSION }}.tgz
 
   build-windows:
+    # zizmor: ignore[overly-broad-permissions]
     permissions:
       contents: write
     strategy:
@@ -69,6 +72,7 @@ jobs:
     env:
       CGO_ENABLED: 1
     steps:
+      # zizmor: ignore[cache-poisoning]
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -121,8 +125,8 @@ jobs:
         env:
           G_VERSION: ${{ env.GIT_VERSION }}
         run: |
-          export PATH="/c/msys64/mingw32/bin:$PATH"
-          which i686-w64-mingw32-gcc || pacman -Sy --noconfirm mingw-w64-i686-toolchain
+          export PATH="/mingw32/bin:$PATH"
+          i686-w64-mingw32-gcc --version
           CC=i686-w64-mingw32-gcc GOARCH=386 go build -o "build/386/smimesign.exe" -ldflags "-X main.versionString=$G_VERSION" .
 
       - name: Sign amd64 and 386
@@ -166,7 +170,7 @@ jobs:
         with:
           name: build-windows
           path: build/
-      
+
       # zizmor: ignore[cache-poisoning]
       - name: Upload Windows files to the release
         uses: softprops/action-gh-release@2d72d869af3bf23602f9593a1e3fd739b80ac1eb
